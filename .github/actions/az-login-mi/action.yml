@@ -1,0 +1,34 @@
+name: "Azure Login (Managed Identity)"
+description: "Authenticate to Azure using OIDC / Workload Identity Federation"
+
+inputs:
+  azure-client-id:
+    description: "Azure AD application/client ID for OIDC auth"
+    required: true
+  azure-tenant-id:
+    description: "Azure AD tenant ID"
+    required: true
+  azure-subscription-id:
+    description: "Azure subscription ID"
+    required: true
+  environment:
+    description: "Azure environment (AzureCloud, AzureUSGovernment, etc.)"
+    required: false
+    default: "AzureCloud"
+
+runs:
+  using: "composite"
+  steps:
+    - name: "Az CLI Login (OIDC)"
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+        environment: ${{ inputs.environment }}
+
+    - name: "Verify Login"
+      shell: bash
+      run: |
+        echo "Logged in to Azure subscription: $(az account show --query id -o tsv)"
+        echo "Current tenant: $(az account show --query tenantId -o tsv)"
