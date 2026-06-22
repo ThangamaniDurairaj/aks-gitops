@@ -1,0 +1,14 @@
+# Default values for the myapp Helm chart.
+
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: "1.25.2"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Additional values can be defined here and referenced in templates.

@@ -1,0 +1,90 @@
+name: CD - Deploy Helm to AKS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "charts/**"
+      - ".github/workflows/cd-helm-aks.yml"
+
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: "Kubernetes namespace"
+        required: true
+        default: "default"
+      release_name:
+        description: "Helm release name"
+        required: true
+        default: "myapp"
+      resource_group:
+        description: "AKS resource group"
+        required: true
+        default: "aks-rg"
+      aks_cluster_name:
+        description: "AKS cluster name"
+        required: true
+        default: "aks-gitops-test"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Helm Chart
+    runs-on: ubuntu-latest
+
+    env:
+      NAMESPACE: ${{ github.event.inputs.namespace || 'default' }}
+      RELEASE_NAME: ${{ github.event.inputs.release_name || 'myapp' }}
+      RESOURCE_GROUP: ${{ github.event.inputs.resource_group || 'aks-rg' }}
+      AKS_CLUSTER_NAME: ${{ github.event.inputs.aks_cluster_name || 'aks-gitops-test' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login using OIDC
+        uses: ./.github/actions/az-login-mi
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ env.RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.3
+
+      - name: Helm lint
+        run: |
+          helm lint ./charts/myapp
+
+      - name: Helm template validation
+        run: |
+          helm template $RELEASE_NAME ./charts/myapp \
+            --namespace $NAMESPACE
+
+      - name: Deploy Helm chart to AKS
+        run: |
+          helm upgrade --install $RELEASE_NAME ./charts/myapp \
+            --namespace $NAMESPACE \
+            --create-namespace \
+            --wait \
+            --atomic \
+            --timeout 10m \
+            --history-max 10
+
+      - name: Verify Helm release
+        run: |
+          helm status $RELEASE_NAME --namespace $NAMESPACE
+          kubectl get pods -n $NAMESPACE
+          kubectl get svc -n $NAMESPACE
