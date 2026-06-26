@@ -1,0 +1,110 @@
+name: ArgoCD - Register & Sync Application
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "argocd/**"
+      - ".github/workflows/argocd-setup.yaml"
+
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: "Target Kubernetes namespace"
+        required: true
+        default: "default"
+      resource_group:
+        description: "AKS resource group"
+        required: true
+        default: "aks-rg"
+      aks_cluster_name:
+        description: "AKS cluster name"
+        required: true
+        default: "aks-gitops-test"
+      argocd_namespace:
+        description: "ArgoCD namespace on the cluster"
+        required: true
+        default: "argocd"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  setup:
+    name: Register Application with ArgoCD
+    runs-on: ubuntu-latest
+
+    env:
+      NAMESPACE: ${{ github.event.inputs.namespace || 'default' }}
+      RESOURCE_GROUP: ${{ github.event.inputs.resource_group || 'aks-rg' }}
+      AKS_CLUSTER_NAME: ${{ github.event.inputs.aks_cluster_name || 'aks-gitops-test' }}
+      ARGOCD_NAMESPACE: ${{ github.event.inputs.argocd_namespace || 'argocd' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login using OIDC
+        uses: ./.github/actions/az-login-mi
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ env.RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+
+      - name: Check ArgoCD is installed on the cluster
+        run: |
+          echo "Checking if ArgoCD is installed..."
+          if kubectl get namespace ${{ env.ARGOCD_NAMESPACE }} &>/dev/null; then
+            echo "ArgoCD namespace '${{ env.ARGOCD_NAMESPACE }}' found."
+            kubectl get pods -n ${{ env.ARGOCD_NAMESPACE }} -l app.kubernetes.io/name=argocd-server -o name
+          else
+            echo "ArgoCD namespace '${{ env.ARGOCD_NAMESPACE }}' not found."
+            echo "Creating namespace '${{ env.ARGOCD_NAMESPACE }}'..."
+            kubectl create namespace ${{ env.ARGOCD_NAMESPACE }}
+            echo "NOTE: ArgoCD server is not installed in this cluster."
+            echo "Install it via: https://argo-cd.readthedocs.io/en/stable/getting_started/"
+            echo "Or run: kubectl create -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
+          fi
+
+      - name: Patch ArgoCD Application manifest with repo URL
+        run: |
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
+          echo "Using repo URL: $REPO_URL"
+          sed -i "s|repoURL: .*|repoURL: $REPO_URL|" argocd/myapp-application.yaml
+          echo "--- Patched Application manifest ---"
+          cat argocd/myapp-application.yaml
+
+      - name: Apply ArgoCD Application manifest
+        run: |
+          echo "Applying ArgoCD Application manifest to cluster..."
+          kubectl apply -f argocd/myapp-application.yaml --namespace ${{ env.ARGOCD_NAMESPACE }}
+          echo "Application registered with ArgoCD."
+
+      - name: Wait for ArgoCD app to be created
+        run: |
+          echo "Waiting for ArgoCD application 'myapp' to be recognized..."
+          for i in $(seq 1 12); do
+            if kubectl get application myapp -n ${{ env.ARGOCD_NAMESPACE }} &>/dev/null; then
+              echo "Application 'myapp' found."
+              break
+            fi
+            echo "Attempt $i/12 - not ready yet, waiting 5s..."
+            sleep 5
+          done
+
+      - name: Verify ArgoCD application status
+        run: |
+          echo "=== ArgoCD Application 'myapp' ==="
+          kubectl get application myapp -n ${{ env.ARGOCD_NAMESPACE }} -o wide
+          echo ""
+          echo "=== Sync Status ==="
+          kubectl get application myapp -n ${{ env.ARGOCD_NAMESPACE }} \
+            -o jsonpath='{.status.sync.status}{" — "}{.status.health.status}{"\n"}'

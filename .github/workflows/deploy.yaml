@@ -6,7 +6,8 @@ on:
       - main
     paths:
       - "charts/**"
-      - ".github/workflows/cd-helm-aks.yml"
+      - "argocd/**"
+      - ".github/workflows/deploy.yaml"
 
   workflow_dispatch:
     inputs:
