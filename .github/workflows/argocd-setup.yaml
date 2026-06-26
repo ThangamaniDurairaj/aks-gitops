@@ -119,37 +119,58 @@ jobs:
 
           echo "ArgoCD admin password configured successfully."
 
-      - name: Patch ArgoCD Application manifest with repo URL
+      - name: Patch ArgoCD Application manifests with repo URL
         run: |
           REPO_URL="${{ github.server_url }}/${{ github.repository }}"
           echo "Using repo URL: $REPO_URL"
-          sed -i "s|repoURL: .*|repoURL: $REPO_URL|" argocd/myapp-application.yaml
-          echo "--- Patched Application manifest ---"
-          cat argocd/myapp-application.yaml
-
-      - name: Apply ArgoCD Application manifest
-        run: |
-          echo "Applying ArgoCD Application manifest to cluster..."
-          kubectl apply -f argocd/myapp-application.yaml --namespace ${{ env.ARGOCD_NAMESPACE }}
-          echo "Application registered with ArgoCD."
-
-      - name: Wait for ArgoCD app to be created
-        run: |
-          echo "Waiting for ArgoCD application 'myapp' to be recognized..."
-          for i in $(seq 1 12); do
-            if kubectl get application myapp -n ${{ env.ARGOCD_NAMESPACE }} &>/dev/null; then
-              echo "Application 'myapp' found."
-              break
+          for app in argocd/myapp-application.yaml argocd/myapp-marketing-application.yaml argocd/myapp-finance-application.yaml; do
+            if [ -f "$app" ]; then
+              sed -i "s|repoURL: .*|repoURL: $REPO_URL|" "$app"
+              echo "Patched: $app"
             fi
-            echo "Attempt $i/12 - not ready yet, waiting 5s..."
-            sleep 5
+          done
+          echo "--- Patched Application manifests ---"
+          cat argocd/myapp-application.yaml
+          echo ""
+          cat argocd/myapp-marketing-application.yaml
+          echo ""
+          cat argocd/myapp-finance-application.yaml
+
+      - name: Apply ArgoCD Application manifests
+        run: |
+          echo "Applying ArgoCD Application manifests to cluster..."
+          for app in argocd/myapp-application.yaml argocd/myapp-marketing-application.yaml argocd/myapp-finance-application.yaml; do
+            if [ -f "$app" ]; then
+              echo "Applying $app..."
+              kubectl apply -f "$app" --namespace ${{ env.ARGOCD_NAMESPACE }}
+            fi
+          done
+          echo "All applications registered with ArgoCD."
+
+      - name: Wait for ArgoCD apps to be created
+        run: |
+          for app in myapp myapp-marketing myapp-finance; do
+            echo "Waiting for ArgoCD application '$app' to be recognized..."
+            for i in $(seq 1 12); do
+              if kubectl get application "$app" -n ${{ env.ARGOCD_NAMESPACE }} &>/dev/null; then
+                echo "Application '$app' found."
+                break
+              fi
+              if [ "$i" -eq 12 ]; then
+                echo "Warning: Application '$app' not found after 60s."
+              fi
+              sleep 5
+            done
           done
 
       - name: Verify ArgoCD application status
         run: |
-          echo "=== ArgoCD Application 'myapp' ==="
-          kubectl get application myapp -n ${{ env.ARGOCD_NAMESPACE }} -o wide
+          echo "=== ArgoCD Applications ==="
+          kubectl get applications -n ${{ env.ARGOCD_NAMESPACE }} -o wide
           echo ""
-          echo "=== Sync Status ==="
-          kubectl get application myapp -n ${{ env.ARGOCD_NAMESPACE }} \
-            -o jsonpath='{.status.sync.status}{" — "}{.status.health.status}{"\n"}'
+          for app in myapp myapp-marketing myapp-finance; do
+            echo "--- $app Sync & Health ---"
+            STATUS=$(kubectl get application "$app" -n ${{ env.ARGOCD_NAMESPACE }} \
+              -o jsonpath='{.status.sync.status}{" — "}{.status.health.status}{"\n"}' 2>/dev/null || echo "Not found")
+            echo "$STATUS"
+          done

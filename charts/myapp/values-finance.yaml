@@ -1,0 +1,7 @@
+# Finance namespace values for the myapp Helm chart.
+# Inherits all defaults from values.yaml, with namespace-specific overrides below.
+# Currently identical to base — customize as needed for the finance environment.
+
+# replicaCount: 3
+# image:
+#   tag: "1.0.0"

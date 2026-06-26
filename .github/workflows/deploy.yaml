@@ -11,14 +11,10 @@ on:
 
   workflow_dispatch:
     inputs:
-      namespace:
-        description: "Kubernetes namespace"
+      target_namespace:
+        description: "Namespace to deploy (or 'all' for all namespaces)"
         required: true
-        default: "default"
-      release_name:
-        description: "Helm release name"
-        required: true
-        default: "myapp"
+        default: "all"
       resource_group:
         description: "AKS resource group"
         required: true
@@ -33,13 +29,48 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
-    name: Deploy Helm Chart
+  validate:
+    name: Validate Helm Chart
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.3
+
+      - name: Helm lint
+        run: |
+          helm lint ./charts/myapp
+
+      - name: Helm template validation (all namespaces)
+        run: |
+          for ns in default marketing finance; do
+            echo "=== Template for namespace: $ns ==="
+            VALUES_FLAG=""
+            if [ -f "charts/myapp/values-$ns.yaml" ]; then
+              VALUES_FLAG="--values charts/myapp/values-$ns.yaml"
+            fi
+            helm template "myapp-$ns" ./charts/myapp \
+              --namespace "$ns" \
+              --values charts/myapp/values.yaml \
+              $VALUES_FLAG
+          done
+
+  deploy:
+    name: Deploy Helm Chart (${{ matrix.namespace }})
+    runs-on: ubuntu-latest
+    needs: validate
+    strategy:
+      matrix:
+        namespace: [default, marketing, finance]
+      fail-fast: false
 
     env:
-      NAMESPACE: ${{ github.event.inputs.namespace || 'default' }}
-      RELEASE_NAME: ${{ github.event.inputs.release_name || 'myapp' }}
+      NAMESPACE: ${{ matrix.namespace }}
+      RELEASE_NAME: myapp-${{ matrix.namespace }}
       RESOURCE_GROUP: ${{ github.event.inputs.resource_group || 'aks-rg' }}
       AKS_CLUSTER_NAME: ${{ github.event.inputs.aks_cluster_name || 'aks-gitops-test' }}
 
@@ -60,24 +91,32 @@ jobs:
           resource-group: ${{ env.RESOURCE_GROUP }}
           cluster-name: ${{ env.AKS_CLUSTER_NAME }}
 
+      - name: Filter target namespace for workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TARGET="${{ github.event.inputs.target_namespace }}"
+          if [ "$TARGET" != "all" ] && [ "$TARGET" != "${{ env.NAMESPACE }}" ]; then
+            echo "Skipping ${{ env.NAMESPACE }} (target is '$TARGET')"
+            # Mark matrix job as skipped by exiting successfully
+            exit 0
+          fi
+          echo "Deploying to ${{ env.NAMESPACE }}..."
+
       - name: Install Helm
         uses: azure/setup-helm@v4
         with:
           version: v3.18.3
 
-      - name: Helm lint
-        run: |
-          helm lint ./charts/myapp
-
-      - name: Helm template validation
-        run: |
-          helm template $RELEASE_NAME ./charts/myapp \
-            --namespace $NAMESPACE
-
       - name: Deploy Helm chart to AKS
         run: |
-          helm upgrade --install $RELEASE_NAME ./charts/myapp \
-            --namespace $NAMESPACE \
+          VALUES_FLAG=""
+          if [ -f "charts/myapp/values-${{ env.NAMESPACE }}.yaml" ]; then
+            VALUES_FLAG="--values charts/myapp/values-${{ env.NAMESPACE }}.yaml"
+          fi
+          helm upgrade --install ${{ env.RELEASE_NAME }} ./charts/myapp \
+            --namespace ${{ env.NAMESPACE }} \
+            --values charts/myapp/values.yaml \
+            $VALUES_FLAG \
             --create-namespace \
             --wait \
             --atomic \
@@ -86,6 +125,6 @@ jobs:
 
       - name: Verify Helm release
         run: |
-          helm status $RELEASE_NAME --namespace $NAMESPACE
-          kubectl get pods -n $NAMESPACE
-          kubectl get svc -n $NAMESPACE
+          helm status ${{ env.RELEASE_NAME }} --namespace ${{ env.NAMESPACE }}
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl get svc -n ${{ env.NAMESPACE }}

@@ -1,0 +1,7 @@
+# Marketing namespace values for the myapp Helm chart.
+# Inherits all defaults from values.yaml, with namespace-specific overrides below.
+# Currently identical to base — customize as needed for the marketing environment.
+
+# replicaCount: 2
+# image:
+#   tag: "1.0.0"
