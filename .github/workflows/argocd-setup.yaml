@@ -59,19 +59,24 @@ jobs:
           resource-group: ${{ env.RESOURCE_GROUP }}
           cluster-name: ${{ env.AKS_CLUSTER_NAME }}
 
-      - name: Check ArgoCD is installed on the cluster
+      - name: Ensure ArgoCD is installed on the cluster
         run: |
-          echo "Checking if ArgoCD is installed..."
-          if kubectl get namespace ${{ env.ARGOCD_NAMESPACE }} &>/dev/null; then
-            echo "ArgoCD namespace '${{ env.ARGOCD_NAMESPACE }}' found."
-            kubectl get pods -n ${{ env.ARGOCD_NAMESPACE }} -l app.kubernetes.io/name=argocd-server -o name
+          echo "Checking if ArgoCD Application CRD is installed..."
+          if kubectl get crd applications.argoproj.io &>/dev/null; then
+            echo "ArgoCD Application CRD found. ArgoCD is already installed."
+            # Still verify the namespace has running pods
+            if kubectl get namespace ${{ env.ARGOCD_NAMESPACE }} &>/dev/null; then
+              kubectl get pods -n ${{ env.ARGOCD_NAMESPACE }} -l app.kubernetes.io/name=argocd-server -o name || \
+                echo "Warning: argocd-server pods not found, but CRD exists."
+            fi
           else
-            echo "ArgoCD namespace '${{ env.ARGOCD_NAMESPACE }}' not found."
-            echo "Creating namespace '${{ env.ARGOCD_NAMESPACE }}'..."
-            kubectl create namespace ${{ env.ARGOCD_NAMESPACE }}
-            echo "NOTE: ArgoCD server is not installed in this cluster."
-            echo "Install it via: https://argo-cd.readthedocs.io/en/stable/getting_started/"
-            echo "Or run: kubectl create -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
+            echo "ArgoCD Application CRD not found. Installing ArgoCD..."
+            kubectl create namespace ${{ env.ARGOCD_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+            echo "Downloading and applying ArgoCD manifests..."
+            kubectl apply -n ${{ env.ARGOCD_NAMESPACE }} -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.0/manifests/install.yaml
+            echo "Waiting for ArgoCD server to be ready..."
+            kubectl wait --for=condition=available --timeout=180s deployment/argocd-server -n ${{ env.ARGOCD_NAMESPACE }} || \
+              echo "Warning: argocd-server not ready within 180s. Check cluster resources or run the workflow again manually."
           fi
 
       - name: Patch ArgoCD Application manifest with repo URL
