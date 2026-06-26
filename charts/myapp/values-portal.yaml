@@ -1,0 +1,14 @@
+# Portal namespace values for the myapp Helm chart.
+# Inherits all defaults from values.yaml, with namespace-specific overrides below.
+# Currently identical to base — customize as needed for the portal environment.
+
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: "1.25.2"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
