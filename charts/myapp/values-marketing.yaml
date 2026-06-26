@@ -2,6 +2,13 @@
 # Inherits all defaults from values.yaml, with namespace-specific overrides below.
 # Currently identical to base — customize as needed for the marketing environment.
 
-# replicaCount: 2
-# image:
-#   tag: "1.0.0"
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: "1.25.2"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
