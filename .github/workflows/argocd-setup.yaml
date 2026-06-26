@@ -79,6 +79,46 @@ jobs:
               echo "Warning: argocd-server not ready within 180s. Check cluster resources or run the workflow again manually."
           fi
 
+      - name: Set ArgoCD admin password
+        run: |
+          ADMIN_PASSWORD="${{ secrets.ARGOCD_ADMIN_PASSWORD }}"
+          if [ -z "$ADMIN_PASSWORD" ]; then
+            echo "ARGOCD_ADMIN_PASSWORD secret not set. Skipping password configuration."
+            exit 0
+          fi
+
+          echo "Setting ArgoCD admin password from GitHub secret..."
+
+          # Wait for argocd-secret to be present (may take a moment on fresh install)
+          echo "Waiting for argocd-secret to be available..."
+          for i in $(seq 1 12); do
+            if kubectl get secret argocd-secret -n ${{ env.ARGOCD_NAMESPACE }} &>/dev/null; then
+              echo "argocd-secret found."
+              break
+            fi
+            if [ "$i" -eq 12 ]; then
+              echo "Error: argocd-secret not found after 60s. Skipping password update."
+              exit 1
+            fi
+            sleep 5
+          done
+
+          # Install htpasswd to generate bcrypt hash
+          sudo apt-get update -qq && sudo apt-get install -y -qq apache2-utils
+
+          # Generate bcrypt hash of the admin password
+          HASH=$(htpasswd -bnBC 10 "" "$ADMIN_PASSWORD" | cut -d: -f2)
+          echo "Bcrypt hash generated."
+
+          # Patch the argocd-secret with the new password hash
+          kubectl patch secret argocd-secret -n ${{ env.ARGOCD_NAMESPACE }} \
+            -p "{\"data\":{\"admin.password\":\"$(echo -n "$HASH" | base64 -w0)\"}}"
+
+          # Remove the initial admin secret so only the new password is valid
+          kubectl delete secret argocd-initial-admin-secret -n ${{ env.ARGOCD_NAMESPACE }} --ignore-not-found
+
+          echo "ArgoCD admin password configured successfully."
+
       - name: Patch ArgoCD Application manifest with repo URL
         run: |
           REPO_URL="${{ github.server_url }}/${{ github.repository }}"
